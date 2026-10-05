@@ -12,7 +12,7 @@ import {
   limit,
   serverTimestamp
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebaseConfig';
+import { db, isFirebaseConfigured } from './firebaseConfig.js';
 
 /**
  * Core Firestore Collections Dictionary

@@ -4,7 +4,9 @@ import {
   Menu, Globe2, MapPin, UserRound, Search, ChevronDown, ShieldCheck,
   Star, Wrench, GraduationCap, Zap, HardHat, Grid2X2, Sprout, ChefHat,
   Heart, Bell, Home, Phone, MessageCircle, ArrowLeft, Sparkles,
-  X, Check, LogOut, Briefcase, Clock, ThumbsUp, AlertCircle, Info, KeyRound
+  X, Check, LogOut, Briefcase, Clock, ThumbsUp, AlertCircle, Info, KeyRound,
+  Truck, Droplet, Wind, Settings, Layers, Paintbrush, Car, Hammer, Laptop,
+  Lock, Eye, EyeOff
 } from 'lucide-react';
 import './styles.css';
 import hero from './assets/hero-technician.jpg';
@@ -18,7 +20,10 @@ import {
   createUserProfile,
   checkPhoneExists,
   subscribeToAuthChanges,
-  signOutUser
+  signOutUser,
+  validatePassword,
+  registerUserWithPassword,
+  loginUserWithPassword
 } from './services/authService';
 import {
   normalizeMoroccanPhone,
@@ -29,23 +34,31 @@ import {
   getProviderReviews,
   getUserReview,
   saveOrUpdateReview,
+  deleteReview,
   formatReviewDate
-} from './services/reviewService';
+} from './services/reviewService.js';
+import {
+  getFavoritesByCustomerId,
+  addFavorite,
+  removeFavorite
+} from './services/firestoreService.js';
 import ProviderPage from './components/ProviderPage';
 import AdminDashboard from './components/AdminDashboard';
 import {
   filterProvidersList,
   getProviderDetails,
   resetDefaultSEO,
-  isTombstonedProvider
-} from './services/providerService';
+  isTombstonedProvider,
+  getRealProvidersByProfession
+} from './services/providerService.js';
 import {
   subscribeToUserNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
   deleteNotification
-} from './services/notificationService';
-import { updateHomeSEO, updatePrivatePageSEO } from './services/seoService';
+} from './services/notificationService.js';
+import { updateHomeSEO, updatePrivatePageSEO } from './services/seoService.js';
+import { isReviewEnvironment } from './utils/envUtils.js';
 
 
 
@@ -214,22 +227,31 @@ const citiesList = [
 ];
 
 const cats = [
-  ['البناء والتشييد', 8, HardHat, 'gold', 'construction', ['بناء المنازل', 'صباغة وديكور', 'جبس عصري', 'زليج ورخام']],
-  ['الكهرباء والميكانيك', 6, Zap, 'blue', 'mechanics', ['كهرباء المباني', 'ميكانيك السيارات', 'صيانة مكيفات']],
-  ['التعليم والتدريس', 7, GraduationCap, 'purple', 'education', ['دروس الدعم', 'لغة فرنسية', 'لغة إنجليزية', 'رياضيات']],
-  ['السباكة والصيانة', 5, Wrench, 'mint', 'plumbing', ['سباكة صحية', 'سخانات مائية', 'تسليك مجاري', 'كشف التسربات']],
-  ['التجميل والفتاحة', 4, Sparkles, 'pink', 'beauty', ['حلاقة وتجميل', 'خياطة تقليدية وفصالة', 'نقش الحناء']],
-  ['المطابخ والطبخ', 3, ChefHat, 'cyan', 'cooking', ['طبخ مغربي تقليدي', 'حلويات ومملحات', 'ولائم ومناسبات']],
-  ['الزراعة والحدائق', 3, Sprout, 'green', 'gardening', ['تنسيق الحدائق', 'صيانة نباتات', 'شبكات السقي بالتنقيط']],
-  ['أخرى', 4, Grid2X2, 'gray', 'other', ['نقل الأثاث', 'تنظيف منازل', 'نجارة خشب وألمنيوم']]
+  ['ديبانج وسحب السيارات', 5, Truck, 'blue', 'towing', ['سحب السيارات المعطلة', 'ديبانج الشاحنات', 'إنقاذ ونقل المركبات', 'ديبانج على الطريق السريع', 'شحن البطارية على الطريق']],
+  ['البناء والأشغال', 8, HardHat, 'gold', 'construction', ['بناء المنازل والهياكل', 'إصلاح وترميم المباني', 'أشغال الخرسانة والأساسات', 'أشغال الهدم والحفر', 'تزليج وتركيب الأحجار']],
+  ['الكهرباء', 6, Zap, 'gold', 'electricity', ['كهرباء المباني والمنازل', 'تركيب لوحات التوزيع', 'إصلاح الأعطال والالتماسات', 'تركيب الإنارة والديكور', 'كاميرات المراقبة والإنذار']],
+  ['الميكانيك وإصلاح السيارات', 7, Wrench, 'blue', 'mechanics', ['تشخيص إلكتروني بالسكانير', 'ميكانيك البنزين والديزل', 'صيانة الفرامل والتعليق', 'تغيير الزيوت والفلاتر', 'صيانة علب السرعة']],
+  ['السباكة والتدفئة', 5, Droplet, 'mint', 'plumbing', ['سباكة صحية وتركيبات', 'تركيب وصيانة السخانات', 'كشف تسربات المياه', 'تسليك المجاري والبالوعات', 'تركيب التدفئة المركزية']],
+  ['التبريد والتكييف', 4, Wind, 'cyan', 'hvac', ['تركيب مكيفات الهواء', 'شحن غاز المكيفات', 'إصلاح الثلاجات المنزلية', 'غرف التبريد التجارية', 'صيانة التكييف المركزي']],
+  ['الصيانة والإصلاحات', 6, Settings, 'purple', 'maintenance', ['إصلاح الأجهزة الكهرومنزلية', 'صيانة سخانات وغسالات', 'صيانة التجهيزات المنزلية', 'إصلاح الأقفال والأبواب', 'ترميم وصيانة عامة']],
+  ['الجبس والزليج', 5, Layers, 'gold', 'plaster-tiles', ['جبس عصري وإضاءة مخفية', 'زليج ورخام الأرضيات', 'تزليج المطابخ والحمامات', 'أقواس وجبس بلدي', 'تزيين الجدران بالبلاستيك']],
+  ['الصباغة والديكور', 5, Paintbrush, 'pink', 'painting', ['صباغة الجدران الداخلية', 'صباغة الواجهات الخارجية', 'خيال ومينا وبيرلاج', 'ورق الحائط والديكور', 'صباغة الخشب والحديد']],
+  ['طلوري وإصلاح هياكل السيارات', 4, Car, 'blue', 'car-body', ['تقويم وتعديل الهياكل (Tôlier)', 'صباغة أفران السيارات', 'تلميع وبوليتش الهياكل', 'إصلاح الصدامات والبلاستيك']],
+  ['النجارة والألمنيوم', 6, Hammer, 'mint', 'carpentry', ['أبواب ونوافذ ألمنيوم', 'مطابخ عصرية إينوكس وخشب', 'نجارة الخشب الكلاسيكي', 'ريفيتمون وبلاكار إيطالي', 'تركيب الزجاج والمرايا']],
+  ['الفلاحة والحدائق', 5, Sprout, 'green', 'gardening', ['تنسيق وصيانة الحدائق', 'شبكات السقي بالتنقيط', 'غرس الأشجار والشتائل', 'تقليم الأشجار والنخيل', 'مكافحة الآفات والأعشاب']],
+  ['النظافة والخدمات المنزلية', 5, Sparkles, 'cyan', 'cleaning', ['تنظيف شامل للمنازل والفيلات', 'تنظيف السجاد والزرابي', 'تنظيف الزجاج والواجهات', 'تطهير وإبادة الحشرات', 'تنظيف ما بعد البناء']],
+  ['المعلوميات والتقنية', 5, Laptop, 'purple', 'tech-it', ['صيانة الحواسيب واللابتوب', 'شبكات الإنترنت والواي فاي', 'كاميرات المراقبة الذكية', 'تركيب البارابول والتلفاز', 'حلول الهواتف الذكية']],
+  ['النقل والخدمات', 4, Truck, 'blue', 'transport', ['نقل الأثاث والرحيل', 'خدمات الشحن السريع', 'تغليف وحماية المنقولات', 'عمال التحميل والتفريغ']],
+  ['الطبخ والمطاعم', 6, ChefHat, 'gold', 'cooking', ['طباخات وطباخو الحفلات والأعراس', 'بسطيلة وطواجن مغربية', 'حلويات ومملحات المناسبات', 'إعداد الولائم والعقيقة', 'طباخ منزلي للمناسبات']],
+  ['أخرى', 6, Grid2X2, 'gray', 'other', ['التجميل والحلاقة', 'التصوير والمناسبات', 'الخياطة والملابس', 'التعليم والتدريس', 'الخدمات المهنية', 'أي مهنة إضافية']]
 ];
 
 const pros = [
   {
     id: 'abdellah-zarfi',
     name: 'عبد الله الزرفي',
-    job: 'طبخ مغربي',
-    category: 'المطابخ والطبخ',
+    job: 'طباخ مغربي للأفراح والولائم',
+    category: 'الطبخ والمطاعم',
     city: 'فاس',
     rating: '4.9',
     reviews: 154,
@@ -250,8 +272,8 @@ const pros = [
   {
     id: 'youssef-alaoui',
     name: 'يوسف العلوي',
-    job: 'ميكانيك السيارات',
-    category: 'الكهرباء والميكانيك',
+    job: 'ميكانيك وتشخيص السيارات',
+    category: 'الميكانيك وإصلاح السيارات',
     city: 'مراكش',
     rating: '4.7',
     reviews: 89,
@@ -272,8 +294,8 @@ const pros = [
   {
     id: 'samira-kettani',
     name: 'سميرة الكتاني',
-    job: 'تدريس اللغة الفرنسية',
-    category: 'التعليم والتدريس',
+    job: 'تدريس ودعم اللغات',
+    category: 'أخرى',
     city: 'الدار البيضاء',
     rating: '4.9',
     reviews: 233,
@@ -294,8 +316,8 @@ const pros = [
   {
     id: 'ahmed-ben-aissa',
     name: 'أحمد بن عيسى',
-    job: 'بناء وتشييد',
-    category: 'البناء والتشييد',
+    job: 'بناء وترميم المباني',
+    category: 'البناء والأشغال',
     city: 'الرباط',
     rating: '4.8',
     reviews: 126,
@@ -363,20 +385,78 @@ export default function App() {
   const [reviewError, setReviewError] = useState(null);
 
   // Form states for login/register modal
+  const [authMode, setAuthMode] = useState('register'); // 'register' | 'login'
   const [accountType, setAccountType] = useState('customer'); // 'customer' | 'provider'
   const [loginPhone, setLoginPhone] = useState('');
   const [loginName, setLoginName] = useState('');
-  const [loginProfession, setLoginProfession] = useState('البناء والتشييد');
-  const [authStep, setAuthStep] = useState('form'); // 'form' | 'otp'
-  const [otpCode, setOtpCode] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [loginCity, setLoginCity] = useState('الرباط');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginProfession, setLoginProfession] = useState('ديبانج وسحب السيارات');
+  const [loginSubCraft, setLoginSubCraft] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authError, setAuthError] = useState(null);
 
+  // Real Firestore Category/Profession Specific Providers state
+  const [categoryRealPros, setCategoryRealPros] = useState([]);
+  const [categoryProsLoading, setCategoryProsLoading] = useState(false);
+  const [professionCounts, setProfessionCounts] = useState({});
 
   // Real Firestore Notifications state
   const [notifications, setNotifications] = useState([]);
   const [notifsLoading, setNotifsLoading] = useState(false);
+
+  // Real-time calculation of provider counts per profession from Firestore
+  const refreshProfessionCounts = async () => {
+    try {
+      const allPros = await getRealProvidersByProfession({ professionName: 'الكل', city: 'جميع المدن' });
+      const counts = {};
+      allPros.forEach(p => {
+        const prof = p.professionName || p.category || p.job;
+        if (prof) {
+          counts[prof] = (counts[prof] || 0) + 1;
+        }
+      });
+      setProfessionCounts(counts);
+      if (allPros.length > 0) {
+        setProsList(allPros);
+      }
+    } catch (err) {
+      console.warn('[ProfessionCounts] Error:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshProfessionCounts();
+  }, []);
+
+  // Fetch real registered providers from Firestore whenever a category is clicked or city changes
+  useEffect(() => {
+    if (!selectedCategory) {
+      setCategoryRealPros([]);
+      return;
+    }
+
+    let isMounted = true;
+    setCategoryProsLoading(true);
+
+    getRealProvidersByProfession({ professionName: selectedCategory, city })
+      .then((realPros) => {
+        if (isMounted) {
+          setCategoryRealPros(realPros);
+          setCategoryProsLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          console.error('[CategoryView] Fetch error:', err);
+          setCategoryRealPros([]);
+          setCategoryProsLoading(false);
+        }
+      });
+
+    return () => { isMounted = false; };
+  }, [selectedCategory, city]);
 
   // Real-time Firestore notifications subscription
   useEffect(() => {
@@ -421,6 +501,27 @@ export default function App() {
     localStorage.setItem('b4it_m3alm_fav', JSON.stringify(fav));
   }, [fav]);
 
+  // Synchronize favorites from Firestore when user logs in
+  useEffect(() => {
+    if (user && user.uid) {
+      getFavoritesByCustomerId(user.uid)
+        .then((favIds) => {
+          if (Array.isArray(favIds) && favIds.length > 0) {
+            setFav((prev) => {
+              const combined = new Set([...prev]);
+              favIds.forEach((id) => {
+                const matched = prosList.find((p) => p.id === id);
+                if (matched) combined.add(matched.name);
+                else combined.add(id);
+              });
+              return Array.from(combined);
+            });
+          }
+        })
+        .catch((err) => console.warn('[Favorites] Firestore sync note:', err));
+    }
+  }, [user?.uid]);
+
   useEffect(() => {
     localStorage.setItem('b4it_m3alm_city', city);
   }, [city]);
@@ -430,6 +531,14 @@ export default function App() {
     const handlePopState = () => {
       const path = window.location.pathname;
       if (path === '/admin') {
+        const isReview = isReviewEnvironment();
+        const isRealAdmin = user && user.role === 'admin';
+        if (!isReview && !isRealAdmin) {
+          window.history.replaceState({}, '', '/');
+          setIsAdminRoute(false);
+          updateHomeSEO();
+          return;
+        }
         setIsAdminRoute(true);
         setViewingProviderId(null);
         updatePrivatePageSEO('لوحة الإدارة');
@@ -447,17 +556,25 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [user]);
 
-  // Initial SEO metadata setup
+  // Initial SEO metadata & direct route validation
   useEffect(() => {
     const path = window.location.pathname;
     if (path === '/admin') {
+      const isReview = isReviewEnvironment();
+      const isRealAdmin = user && user.role === 'admin';
+      if (!isReview && !isRealAdmin && !authLoading) {
+        window.history.replaceState({}, '', '/');
+        setIsAdminRoute(false);
+        updateHomeSEO();
+        return;
+      }
       updatePrivatePageSEO('لوحة الإدارة');
     } else if (!path.startsWith('/provider/')) {
       updateHomeSEO();
     }
-  }, []);
+  }, [user, authLoading]);
 
   // Fetch provider whenever viewingProviderId changes
   useEffect(() => {
@@ -502,6 +619,12 @@ export default function App() {
   };
 
   const handleOpenAdmin = () => {
+    const isReview = isReviewEnvironment();
+    const isRealAdmin = user && user.role === 'admin';
+    if (!isReview && !isRealAdmin) {
+      showToastMsg('عذراً، مسار الإدارة متاح للمسؤولين فقط.');
+      return;
+    }
     window.history.pushState({}, '', '/admin');
     setIsAdminRoute(true);
     setViewingProviderId(null);
@@ -638,15 +761,47 @@ export default function App() {
     }
   };
 
+  // Delete review
+  const handleDeleteReview = async () => {
+    if (!user || !selectedPro || !userReview) return;
+    setSubmittingReview(true);
+    setReviewError(null);
+    try {
+      await deleteReview(selectedPro.id, user.uid);
+      setUserReview(null);
+      setInputComment('');
+      setInputRating(5);
+      setActiveReviews((prev) => prev.filter((r) => r.customerUid !== user.uid));
+      setSelectedPro((prev) => prev ? { ...prev, reviews: Math.max(0, (prev.reviews || 1) - 1) } : prev);
+      setProsList((prev) => prev.map((p) => p.id === selectedPro.id ? { ...p, reviews: Math.max(0, (p.reviews || 1) - 1) } : p));
+      showToastMsg('تم حذف تقييمك بنجاح 🗑️');
+    } catch (err) {
+      setReviewError(err.message || 'حدث خطأ أثناء حذف التقييم');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
 
-  const toggleFav = (proName, e) => {
+  const toggleFav = async (proName, e) => {
     if (e) e.stopPropagation();
-    setFav((prev) => {
-      const exists = prev.includes(proName);
-      const next = exists ? prev.filter((n) => n !== proName) : [...prev, proName];
-      showToastMsg(exists ? 'تمت الإزالة من المفضلة' : 'تمت الإضافة إلى المفضلة ❤️');
-      return next;
-    });
+    const exists = fav.includes(proName);
+    const next = exists ? prev => prev.filter((n) => n !== proName) : prev => [...prev, proName];
+    setFav(next);
+    showToastMsg(exists ? 'تمت الإزالة من المفضلة' : 'تمت الإضافة إلى المفضلة ❤️');
+
+    if (user && user.uid) {
+      const targetPro = prosList.find((p) => p.name === proName);
+      const proId = targetPro ? targetPro.id : proName;
+      try {
+        if (exists) {
+          await removeFavorite(user.uid, proId);
+        } else {
+          await addFavorite(user.uid, proId);
+        }
+      } catch (err) {
+        console.warn('[Favorites] Firestore sync error:', err.message);
+      }
+    }
   };
 
   const handleCall = (pro, e) => {
@@ -666,8 +821,8 @@ export default function App() {
     window.open(`https://wa.me/212661234567?text=${text}`, '_blank');
   };
 
-  // Step 1: Send OTP to Moroccan phone
-  const handleSendOtp = async (e) => {
+  // Password-based Registration Handler
+  const handleRegisterWithPassword = async (e) => {
     if (e) e.preventDefault();
     setAuthError(null);
 
@@ -678,65 +833,74 @@ export default function App() {
     }
 
     if (!loginName.trim()) {
-      setAuthError('يرجى إدخال الاسم الكامل');
+      setAuthError('يرجى إدخال الاسم الكامل.');
+      return;
+    }
+
+    const pwdCheck = validatePassword(loginPassword);
+    if (!pwdCheck.isValid) {
+      setAuthError(pwdCheck.message);
       return;
     }
 
     setAuthSubmitting(true);
     try {
-      // Check phone duplication
-      const phoneCheck = await checkPhoneExists(norm);
-      if (phoneCheck.exists) {
-        // If account exists, notify and proceed to login verification
-        showToastMsg('الرقم مسجل مسبقاً. جاري إرسال رمز تسجيل الدخول...');
-      }
+      const profId = accountType === 'provider' ? (cats.find(c => c[0] === loginProfession)?.[4] || 'other') : null;
+      const profile = await registerUserWithPassword({
+        fullName: loginName.trim(),
+        phone: norm,
+        password: loginPassword.trim(),
+        role: accountType,
+        cityId: loginCity || (city !== 'جميع المدن' ? city : 'الرباط'),
+        professionName: accountType === 'provider' ? loginProfession : null,
+        professionId: profId,
+        subCraft: accountType === 'provider' ? loginSubCraft : null,
+        whatsapp: norm
+      });
 
-      const confirmResult = await sendOtp(norm);
-      setConfirmationResult(confirmResult);
-      setAuthStep('otp');
-      showToastMsg(`تم إرسال رمز التأكيد (OTP) إلى ${formatPhoneForDisplay(norm)}`);
+      setUser(profile);
+      setShowLoginModal(false);
+      setLoginPassword('');
+      refreshProfessionCounts();
+      showToastMsg(`مرحباً بك ${profile.fullName || profile.name}! تم إنشاء الحساب بنجاح كـ ${accountType === 'provider' ? 'معلم محترف' : 'زبون معتمد'}.`);
     } catch (err) {
-      setAuthError(err.message || 'حدث خطأ أثناء إرسال رمز التحقق');
+      setAuthError(err.message || 'حدث خطأ أثناء إنشاء الحساب.');
     } finally {
       setAuthSubmitting(false);
     }
   };
 
-  // Step 2: Verify OTP and create/update Firestore profile
-  const handleVerifyOtp = async (e) => {
+  // Password-based Login Handler
+  const handleLoginWithPassword = async (e) => {
     if (e) e.preventDefault();
     setAuthError(null);
 
-    if (!otpCode || otpCode.trim().length !== 6) {
-      setAuthError('يرجى إدخال رمز التحقق المكون من 6 أرقام');
+    const norm = normalizeMoroccanPhone(loginPhone);
+    if (!isValidMoroccanPhone(norm)) {
+      setAuthError('يرجى إدخال رقم هاتف مغربي صحيح.');
+      return;
+    }
+
+    const pwdCheck = validatePassword(loginPassword);
+    if (!pwdCheck.isValid) {
+      setAuthError(pwdCheck.message);
       return;
     }
 
     setAuthSubmitting(true);
     try {
-      const authUser = await verifyOtp(confirmationResult, otpCode);
-
-      // Create or update Firestore profile
-      const profId = accountType === 'provider' ? (cats.find(c => c[0] === loginProfession)?.[4] || 'other') : null;
-      const userProfile = await createUserProfile({
-        uid: authUser.uid,
-        role: accountType,
-        fullName: loginName.trim() || 'مستخدم جديد',
-        phone: loginPhone.trim(),
-        cityId: city === 'جميع المدن' ? 'الرباط' : city,
-        professionId: profId,
-        professionName: accountType === 'provider' ? loginProfession : null,
-        whatsapp: loginPhone.trim()
+      const profile = await loginUserWithPassword({
+        phone: norm,
+        password: loginPassword.trim()
       });
 
-      setUser(userProfile);
+      setUser(profile);
       setShowLoginModal(false);
-      setAuthStep('form');
-      setOtpCode('');
-      setConfirmationResult(null);
-      showToastMsg(`مرحباً بك ${userProfile.fullName}! تم تسجيل الدخول بنجاح كـ ${userProfile.role === 'provider' ? 'معلم' : 'زبون'}.`);
+      setLoginPassword('');
+      refreshProfessionCounts();
+      showToastMsg(`أهلاً بك مجدداً ${profile.fullName || profile.name}!`);
     } catch (err) {
-      setAuthError(err.message || 'رمز التحقق غير صحيح، يرجى المحاولة ثانية.');
+      setAuthError(err.message || 'حدث خطأ أثناء تسجيل الدخول.');
     } finally {
       setAuthSubmitting(false);
     }
@@ -818,6 +982,12 @@ export default function App() {
   const unreadNotifsCount = notifications.filter((n) => !n.isRead && n.unread !== false).length;
 
 
+  // Resolve active category meta
+  const activeCatObj = selectedCategory ? (cats.find(c => c[0] === selectedCategory) || [selectedCategory, 0, Wrench, 'blue', 'category', []]) : null;
+  const CatIcon = activeCatObj ? activeCatObj[2] : null;
+  const catColor = activeCatObj ? activeCatObj[3] : 'blue';
+  const catSubCrafts = activeCatObj ? activeCatObj[5] : [];
+
   return (
     <div className="app" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* Toast Bar */}
@@ -871,7 +1041,7 @@ export default function App() {
 
       {/* MAIN VIEW CONTENT ACCORDING TO BOTTOM NAV & DIRECT ROUTE */}
       <main>
-        {isAdminRoute ? (
+        {isAdminRoute && (isReviewEnvironment() || user?.role === 'admin') ? (
           <AdminDashboard
             user={user}
             onUserUpdate={(u) => setUser(u)}
@@ -972,99 +1142,290 @@ export default function App() {
               </div>
             )}
 
-            {/* CATEGORIES SECTION */}
-            <section className="section">
-              <div className="section-head">
-                <h2>{t.cats_title}</h2>
-                <button onClick={() => setShowAllCatsModal(true)}>
-                  {t.cats_view_all} <ArrowLeft style={{ transform: isRtl ? 'none' : 'rotate(180deg)' }} />
-                </button>
-              </div>
-              <div className="cats">
-                {cats.map(([n, c, I, color]) => (
-                  <button
-                    className={`cat ${color} ${selectedCategory === n ? 'selected' : ''}`}
-                    key={n}
-                    onClick={() => handleCategoryClick(n)}
-                  >
-                    <span className="cat-icon"><I /></span>
-                    <strong>{n}</strong>
-                    <small>{c} مهن</small>
-                  </button>
-                ))}
-              </div>
-            </section>
+            {selectedCategory ? (
+              /* DEDICATED PROFESSION VIEW (عند الضغط على أي بطاقة مهنة) */
+              <section className="section profession-page" id="profession-view-anchor">
+                {/* DEDICATED PROFESSION BANNER CARD */}
+                <div className={`profession-header-card ${catColor}`} style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      {CatIcon && (
+                        <span className="cat-icon" style={{ width: 62, height: 62, borderRadius: 16, flexShrink: 0 }}>
+                          <CatIcon size={32} />
+                        </span>
+                      )}
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0b315d' }}>
+                            {selectedCategory}
+                          </h1>
+                          <span className="badge-pill" style={{ background: '#fff', color: '#09569c', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
+                            {categoryProsLoading ? 'جاري التحميل...' : `${categoryRealPros.length} معلم مسجل`}
+                          </span>
+                        </div>
+                        <p style={{ margin: '6px 0 0', fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                          قائمة الحرفيين والمعلمين المعتمدين في مهنة <strong>{selectedCategory}</strong> {city !== 'جميع المدن' ? `بمدينة ${city}` : 'في جميع المدن المغربية'}.
+                        </p>
+                      </div>
+                    </div>
 
-            {/* FEATURED PROS SECTION */}
-            <section className="section pros-section" id="pros-list-anchor">
-              <div className="section-head">
-                <h2>{t.pros_title} ({filteredPros.length})</h2>
-                <button onClick={handleResetFilters}>
-                  {t.pros_view_all} <ArrowLeft style={{ transform: isRtl ? 'none' : 'rotate(180deg)' }} />
-                </button>
-              </div>
-
-              {filteredPros.length > 0 ? (
-                <div className="pros">
-                  {filteredPros.map((p) => (
-                    <article
-                      className="pro"
-                      key={p.id || p.name}
-                      onClick={() => handleOpenProvider(p.id)}
+                    <button
+                      onClick={() => setSelectedCategory(null)}
+                      style={{
+                        border: '1px solid #cbd5e1',
+                        background: '#fff',
+                        color: '#475569',
+                        borderRadius: 12,
+                        padding: '8px 14px',
+                        font: '700 13px Cairo',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
                     >
-                      <button
-                        className={`heart ${fav.includes(p.name) ? 'on' : ''}`}
-                        onClick={(e) => toggleFav(p.name, e)}
-                        title="إضافة للمفضلة"
-                        aria-label={fav.includes(p.name) ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
-                      >
-                        <Heart />
-                      </button>
+                      <ArrowLeft style={{ transform: isRtl ? 'none' : 'rotate(180deg)' }} size={16} />
+                      العودة لكافة المهن
+                    </button>
+                  </div>
 
-                      <div className="photo-wrap">
-                        <img
-                          src={p.img}
-                          alt={`صورة المعلم ${p.name}`}
-                          loading="lazy"
-                          onError={(e) => {
-                            e.target.onerror = null;
-                            e.target.src = 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&auto=format&fit=crop&q=80';
+                  {/* Sub-specialties tags */}
+                  {catSubCrafts && catSubCrafts.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14, paddingTop: 12, borderTop: '1px dashed #cbd5e1' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginLeft: 4, alignSelf: 'center' }}>
+                        التخصصات المشمولة:
+                      </span>
+                      {catSubCrafts.map((sub, sIdx) => (
+                        <span
+                          key={sIdx}
+                          style={{
+                            background: '#fff',
+                            border: '1px solid #e2e8f0',
+                            color: '#334155',
+                            borderRadius: 14,
+                            padding: '3px 10px',
+                            fontSize: 12
                           }}
-                        />
-                        <span className="check"><ShieldCheck /></span>
-                      </div>
-
-                      <span className="available">{t.available_now}</span>
-                      <div className="rating">
-                        <Star /> {p.rating} <small>({p.reviews})</small>
-                      </div>
-
-                      <h3>{p.name}</h3>
-                      <p>{p.job}</p>
-                      <span className="loc"><MapPin /> {p.city}</span>
-
-                      <div className="contact">
-                        <button className="call" onClick={(e) => handleCall(p, e)} aria-label={`اتصال مباشر بالمعلم ${p.name}`}>
-                          <Phone /> {t.call}
-                        </button>
-                        <button className="wa" onClick={(e) => handleWhatsApp(p, e)} aria-label={`مراسلة المعلم ${p.name} عبر واتساب`}>
-                          <MessageCircle /> {t.whatsapp}
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                        >
+                          ✓ {sub}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="empty-box">
-                  <AlertCircle />
-                  <h4>{t.no_results}</h4>
-                  <p>لم نجد أي معلم مطابق للبحث "{query || city || selectedCategory}". جرب اختيار مدينة أخرى أو مسح الفلاتر.</p>
-                  <button className="btn-primary" onClick={handleResetFilters}>
-                    {t.reset_search}
-                  </button>
+
+                {/* CITY FILTER ROW FOR THIS PROFESSION */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '18px 0 14px', flexWrap: 'wrap', gap: 10 }}>
+                  <h2 style={{ margin: 0, fontSize: 18, color: '#0b315d' }}>
+                    المعلمون المسجلون في {selectedCategory} ({categoryRealPros.length})
+                  </h2>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      className="pill"
+                      onClick={() => setShowCityModal(true)}
+                      style={{ background: '#fff', border: '1px solid #cbd5e1' }}
+                    >
+                      <MapPin className="city-map-icon" /> المدينة: <strong>{city}</strong> <ChevronDown size={14} />
+                    </button>
+                    {city !== 'جميع المدن' && (
+                      <button
+                        onClick={() => setCity('جميع المدن')}
+                        style={{ border: 0, background: 'transparent', color: '#09569c', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        عرض جميع المدن
+                      </button>
+                    )}
+                  </div>
                 </div>
-              )}
-            </section>
+
+                {/* REAL REGISTERED CRAFTSMEN IN EXACT ARTICLE.PRO CARD DESIGN */}
+                {categoryProsLoading ? (
+                  <div className="empty-box" style={{ padding: '40px 20px' }}>
+                    <span className="spinner" style={{ width: 26, height: 26, display: 'inline-block', verticalAlign: -4, marginLeft: 8, borderTopColor: '#09569c', borderColor: '#cbd5e1' }}></span>
+                    <h4 style={{ marginTop: 12 }}>جاري جلب المعلمين المسجلين في Firestore...</h4>
+                  </div>
+                ) : categoryRealPros.length > 0 ? (
+                  <div className="pros">
+                    {categoryRealPros.map((p) => (
+                      <article
+                        className="pro"
+                        key={p.id || p.name}
+                        onClick={() => handleOpenProvider(p.id)}
+                      >
+                        <button
+                          className={`heart ${fav.includes(p.name) ? 'on' : ''}`}
+                          onClick={(e) => toggleFav(p.name, e)}
+                          title="إضافة للمفضلة"
+                          aria-label={fav.includes(p.name) ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
+                        >
+                          <Heart />
+                        </button>
+
+                        <div className="photo-wrap">
+                          <img
+                            src={p.img}
+                            alt={`صورة المعلم ${p.name}`}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.target.onerror = null;
+                              e.target.src = 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&auto=format&fit=crop&q=80';
+                            }}
+                          />
+                          <span className="check"><ShieldCheck /></span>
+                        </div>
+
+                        <span className="available">{t.available_now}</span>
+                        <div className="rating">
+                          <Star /> {p.rating} <small>({p.reviews})</small>
+                        </div>
+
+                        <h3>{p.name}</h3>
+                        <p>{p.job || selectedCategory}</p>
+                        <span className="loc"><MapPin /> {p.city}</span>
+
+                        <div className="contact">
+                          <button className="call" onClick={(e) => handleCall(p, e)} aria-label={`اتصال مباشر بالمعلم ${p.name}`}>
+                            <Phone /> {t.call}
+                          </button>
+                          <button className="wa" onClick={(e) => handleWhatsApp(p, e)} aria-label={`مراسلة المعلم ${p.name} عبر واتساب`}>
+                            <MessageCircle /> {t.whatsapp}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-box">
+                    <AlertCircle style={{ color: '#09569c', width: 46, height: 46 }} />
+                    <h4 style={{ fontSize: 18, color: '#0b315d', marginTop: 10 }}>لا يوجد معلم مسجل حالياً في هذه المهنة</h4>
+                    <p style={{ maxWidth: 420, margin: '6px auto 18px' }}>
+                      لم يسجل أي حرفي حتى الآن في تخصص «{selectedCategory}»
+                      {city !== 'جميع المدن' ? ` بمدينة ${city}` : ''}. كن أول من ينضم ويستقبل طلبات الزبائن!
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      {city !== 'جميع المدن' && (
+                        <button className="btn-secondary" onClick={() => setCity('جميع المدن')} style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid #cbd5e1', cursor: 'pointer' }}>
+                          البحث في جميع المدن
+                        </button>
+                      )}
+                      <button
+                        className="btn-primary"
+                        onClick={() => {
+                          setAccountType('provider');
+                          setLoginProfession(selectedCategory);
+                          setShowLoginModal(true);
+                        }}
+                      >
+                        سجل الآن كمعلم في {selectedCategory}
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setSelectedCategory(null)}
+                        style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid #cbd5e1', cursor: 'pointer' }}
+                      >
+                        تصفح باقي المهن
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <>
+                {/* CATEGORIES SECTION */}
+                <section className="section">
+                  <div className="section-head">
+                    <h2>{t.cats_title}</h2>
+                    <button onClick={() => setShowAllCatsModal(true)}>
+                      {t.cats_view_all} <ArrowLeft style={{ transform: isRtl ? 'none' : 'rotate(180deg)' }} />
+                    </button>
+                  </div>
+                  <div className="cats">
+                    {cats.slice(0, 16).map(([n, c, I, color]) => (
+                      <button
+                        className={`cat ${color} ${selectedCategory === n ? 'selected' : ''}`}
+                        key={n}
+                        onClick={() => handleCategoryClick(n)}
+                      >
+                        <span className="cat-icon"><I /></span>
+                        <strong>{n}</strong>
+                        <small>{professionCounts[n] !== undefined ? `${professionCounts[n]} معلمين` : `${c} مهن`}</small>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                {/* FEATURED PROS SECTION */}
+                <section className="section pros-section" id="pros-list-anchor">
+                  <div className="section-head">
+                    <h2>{t.pros_title} ({filteredPros.length})</h2>
+                    <button onClick={handleResetFilters}>
+                      {t.pros_view_all} <ArrowLeft style={{ transform: isRtl ? 'none' : 'rotate(180deg)' }} />
+                    </button>
+                  </div>
+
+                  {filteredPros.length > 0 ? (
+                    <div className="pros">
+                      {filteredPros.map((p) => (
+                        <article
+                          className="pro"
+                          key={p.id || p.name}
+                          onClick={() => handleOpenProvider(p.id)}
+                        >
+                          <button
+                            className={`heart ${fav.includes(p.name) ? 'on' : ''}`}
+                            onClick={(e) => toggleFav(p.name, e)}
+                            title="إضافة للمفضلة"
+                            aria-label={fav.includes(p.name) ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
+                          >
+                            <Heart />
+                          </button>
+
+                          <div className="photo-wrap">
+                            <img
+                              src={p.img}
+                              alt={`صورة المعلم ${p.name}`}
+                              loading="lazy"
+                              onError={(e) => {
+                                e.target.onerror = null;
+                                e.target.src = 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&auto=format&fit=crop&q=80';
+                              }}
+                            />
+                            <span className="check"><ShieldCheck /></span>
+                          </div>
+
+                          <span className="available">{t.available_now}</span>
+                          <div className="rating">
+                            <Star /> {p.rating} <small>({p.reviews})</small>
+                          </div>
+
+                          <h3>{p.name}</h3>
+                          <p>{p.job}</p>
+                          <span className="loc"><MapPin /> {p.city}</span>
+
+                          <div className="contact">
+                            <button className="call" onClick={(e) => handleCall(p, e)} aria-label={`اتصال مباشر بالمعلم ${p.name}`}>
+                              <Phone /> {t.call}
+                            </button>
+                            <button className="wa" onClick={(e) => handleWhatsApp(p, e)} aria-label={`مراسلة المعلم ${p.name} عبر واتساب`}>
+                              <MessageCircle /> {t.whatsapp}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="empty-box">
+                      <AlertCircle />
+                      <h4>{t.no_results}</h4>
+                      <p>لم نجد أي معلم مطابق للبحث "{query || city || selectedCategory}". جرب اختيار مدينة أخرى أو مسح الفلاتر.</p>
+                      <button className="btn-primary" onClick={handleResetFilters}>
+                        {t.reset_search}
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
 
             {/* WHATSAPP BANNER */}
             <section className="whatsapp">
@@ -1707,6 +2068,18 @@ export default function App() {
                         userReview ? 'حفظ تعديل التقييم' : 'إرسال التقييم'
                       )}
                     </button>
+
+                    {userReview && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleDeleteReview}
+                        disabled={submittingReview}
+                        style={{ width: '100%', marginTop: 8, padding: '7px', fontSize: 12, color: '#dc2626', borderColor: '#fecaca' }}
+                      >
+                        🗑️ حذف تقييمي
+                      </button>
+                    )}
                   </form>
                 </div>
               ) : !user ? (
@@ -1942,24 +2315,42 @@ export default function App() {
         </div>
       )}
 
-      {/* LOGIN / REGISTER MODAL WITH PHONE OTP & ROLES */}
+      {/* LOGIN / REGISTER MODAL WITH PHONE & PASSWORD AUTH */}
       {showLoginModal && (
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
           <div className="modal-box" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
                 <UserRound size={20} />
-                {authStep === 'otp' ? 'التحقق برمز OTP' : (accountType === 'provider' ? 'تسجيل معلم محترف' : 'تسجيل دخول زبون')}
+                {authMode === 'register' ? (accountType === 'provider' ? 'تسجيل معلم محترف' : 'تسجيل حساب زبون') : 'تسجيل الدخول إلى حسابك'}
               </h3>
               <button
                 className="close-btn"
                 onClick={() => {
                   setShowLoginModal(false);
-                  setAuthStep('form');
+                  setLoginPassword('');
                   setAuthError(null);
                 }}
               >
                 <X size={18} />
+              </button>
+            </div>
+
+            {/* Auth Mode Tabs (Register / Login) */}
+            <div className="role-tabs" style={{ marginBottom: 14 }}>
+              <button
+                type="button"
+                className={`role-tab-btn ${authMode === 'register' ? 'active' : ''}`}
+                onClick={() => { setAuthMode('register'); setAuthError(null); }}
+              >
+                ✨ إنشاء حساب جديد
+              </button>
+              <button
+                type="button"
+                className={`role-tab-btn ${authMode === 'login' ? 'active' : ''}`}
+                onClick={() => { setAuthMode('login'); setAuthError(null); }}
+              >
+                🔑 تسجيل الدخول
               </button>
             </div>
 
@@ -1970,7 +2361,8 @@ export default function App() {
               </div>
             )}
 
-            {authStep === 'form' ? (
+            {authMode === 'register' ? (
+              /* REGISTER FORM */
               <>
                 {/* Account Type Selector Tabs */}
                 <div className="role-tabs">
@@ -1990,7 +2382,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <form onSubmit={handleSendOtp}>
+                <form onSubmit={handleRegisterWithPassword}>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
                     الاسم الكامل
                   </label>
@@ -2002,19 +2394,57 @@ export default function App() {
                     required
                   />
 
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
+                    المدينة
+                  </label>
+                  <select
+                    className="form-input"
+                    value={loginCity}
+                    onChange={(e) => setLoginCity(e.target.value)}
+                    style={{ height: 42, background: '#fff', marginBottom: 12 }}
+                  >
+                    {citiesList.filter(c => c !== 'جميع المدن').map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+
                   {accountType === 'provider' && (
                     <>
                       <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
-                        المهنة أو التخصص
+                        المهنة الرئيسية
                       </label>
                       <select
                         className="form-input"
                         value={loginProfession}
-                        onChange={(e) => setLoginProfession(e.target.value)}
-                        style={{ height: 42, background: '#fff' }}
+                        onChange={(e) => {
+                          const newProf = e.target.value;
+                          setLoginProfession(newProf);
+                          const matchedCat = cats.find(c => c[0] === newProf);
+                          if (matchedCat && matchedCat[5] && matchedCat[5].length > 0) {
+                            setLoginSubCraft(matchedCat[5][0]);
+                          } else {
+                            setLoginSubCraft('');
+                          }
+                        }}
+                        style={{ height: 42, background: '#fff', marginBottom: 12 }}
                       >
                         {cats.map(([name]) => (
                           <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+
+                      <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
+                        التخصص الفرعي / الخدمة المحددة
+                      </label>
+                      <select
+                        className="form-input"
+                        value={loginSubCraft}
+                        onChange={(e) => setLoginSubCraft(e.target.value)}
+                        style={{ height: 42, background: '#fff', marginBottom: 12 }}
+                      >
+                        <option value="">تخصص عام في المهنة</option>
+                        {(cats.find(c => c[0] === loginProfession)?.[5] || []).map((sub) => (
+                          <option key={sub} value={sub}>{sub}</option>
                         ))}
                       </select>
                     </>
@@ -2031,110 +2461,174 @@ export default function App() {
                     type="tel"
                     required
                   />
-                  <p style={{ margin: '-6px 0 14px', fontSize: 11, color: '#64748b' }}>
-                    * سيصلك رمز التحقق المكون من 6 أرقام عبر رسالة SMS
-                  </p>
 
-                  <div id="recaptcha-container"></div>
+                  {/* Explicit Required Password Field */}
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
+                    كلمة السر (مطلوبة - 4 خانات على الأقل)
+                  </label>
+                  <div style={{ position: 'relative', marginBottom: 4 }}>
+                    <input
+                      className="form-input"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="مثال: 1234 أو abcd أو ab12"
+                      type={showPassword ? 'text' : 'password'}
+                      minLength={4}
+                      style={{ paddingLeft: isRtl ? 40 : 12, paddingRight: isRtl ? 12 : 40, marginBottom: 0 }}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      style={{
+                        position: 'absolute',
+                        left: isRtl ? 10 : 'auto',
+                        right: isRtl ? 'auto' : 10,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        border: 0,
+                        background: 'transparent',
+                        color: '#64748b',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: 4
+                      }}
+                      tabIndex={-1}
+                      aria-label="إظهار/إخفاء كلمة السر"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                  <p style={{ margin: '4px 0 14px', fontSize: 11, color: '#64748b' }}>
+                    * الحد الأدنى 4 أحرف أو أرقام (أرقام فقط، أحرف فقط، أو كلاهما).
+                  </p>
 
                   <button
                     type="submit"
                     className="btn-primary"
                     disabled={authSubmitting}
-                    style={{ width: '100%', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    style={{ width: '100%', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12 }}
                   >
                     {authSubmitting ? (
                       <>
-                        <span className="spinner"></span> جاري إرسال الرمز...
+                        <span className="spinner"></span> جاري إنشاء الحساب...
                       </>
                     ) : (
                       <>
-                        <KeyRound size={16} /> إرسال رمز التحقق (OTP)
+                        <Check size={16} /> إنشاء الحساب والتسجيل
                       </>
                     )}
                   </button>
                 </form>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoAuth('customer')}
-                    disabled={authSubmitting}
-                    style={{
-                      border: '1px solid #bae6fd',
-                      background: '#f0f9ff',
-                      color: '#0369a1',
-                      borderRadius: 12,
-                      padding: '8px 6px',
-                      font: '700 11px Cairo',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ⚡ تجربة كزبون (Customer)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickDemoAuth('provider')}
-                    disabled={authSubmitting}
-                    style={{
-                      border: '1px solid #bbf7d0',
-                      background: '#f0fdf4',
-                      color: '#166534',
-                      borderRadius: 12,
-                      padding: '8px 6px',
-                      font: '700 11px Cairo',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ⚡ تجربة كمعلم (Provider)
-                  </button>
-                </div>
               </>
             ) : (
-              /* Step 2: OTP Verification */
-              <form onSubmit={handleVerifyOtp} className="otp-box">
-                <p style={{ margin: '0 0 10px', fontSize: 13, color: '#334155' }}>
-                  أدخل رمز التحقق (OTP) المرسل إلى الرقم:
-                  <br />
-                  <strong style={{ color: '#09569c', direction: 'ltr', display: 'inline-block', marginTop: 4 }}>
-                    {formatPhoneForDisplay(loginPhone)}
-                  </strong>
-                </p>
-
+              /* LOGIN FORM */
+              <form onSubmit={handleLoginWithPassword}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
+                  رقم الهاتف المغربي
+                </label>
                 <input
-                  className="otp-input"
-                  type="text"
-                  maxLength={6}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                  placeholder="------"
-                  autoFocus
+                  className="form-input"
+                  value={loginPhone}
+                  onChange={(e) => setLoginPhone(e.target.value)}
+                  placeholder="06 XX XX XX XX"
+                  type="tel"
                   required
                 />
+
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>
+                  كلمة السر
+                </label>
+                <div style={{ position: 'relative', marginBottom: 14 }}>
+                  <input
+                    className="form-input"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="أدخل كلمة السر"
+                    type={showPassword ? 'text' : 'password'}
+                    minLength={4}
+                    style={{ paddingLeft: isRtl ? 40 : 12, paddingRight: isRtl ? 12 : 40, marginBottom: 0 }}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{
+                      position: 'absolute',
+                      left: isRtl ? 10 : 'auto',
+                      right: isRtl ? 'auto' : 10,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 0,
+                      background: 'transparent',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: 4
+                    }}
+                    tabIndex={-1}
+                    aria-label="إظهار/إخفاء كلمة السر"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
 
                 <button
                   type="submit"
                   className="btn-primary"
                   disabled={authSubmitting}
-                  style={{ width: '100%', marginBottom: 10, padding: 12 }}
+                  style={{ width: '100%', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12 }}
                 >
                   {authSubmitting ? (
-                    <span className="spinner-btn">
-                      <span className="spinner"></span> جاري التحقق وإنشاء الحساب...
-                    </span>
+                    <>
+                      <span className="spinner"></span> جاري تسجيل الدخول...
+                    </>
                   ) : (
-                    'تأكيد الدخول'
+                    <>
+                      <Lock size={16} /> تسجيل الدخول
+                    </>
                   )}
                 </button>
+              </form>
+            )}
 
+            {isReviewEnvironment() && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
                 <button
                   type="button"
-                  onClick={() => { setAuthStep('form'); setOtpCode(''); setAuthError(null); }}
-                  style={{ border: 0, background: 'transparent', color: '#1d4ed8', font: '700 12px Cairo', cursor: 'pointer' }}
+                  onClick={() => handleQuickDemoAuth('customer')}
+                  disabled={authSubmitting}
+                  style={{
+                    border: '1px solid #bae6fd',
+                    background: '#f0f9ff',
+                    color: '#0369a1',
+                    borderRadius: 12,
+                    padding: '8px 6px',
+                    font: '700 11px Cairo',
+                    cursor: 'pointer'
+                  }}
                 >
-                  ← تغيير رقم الهاتف أو إعادة الإرسال
+                  ⚡ تجربة كزبون (Customer)
                 </button>
-              </form>
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemoAuth('provider')}
+                  disabled={authSubmitting}
+                  style={{
+                    border: '1px solid #bbf7d0',
+                    background: '#f0fdf4',
+                    color: '#166534',
+                    borderRadius: 12,
+                    padding: '8px 6px',
+                    font: '700 11px Cairo',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ⚡ تجربة كمعلم (Provider)
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -2199,13 +2693,15 @@ export default function App() {
               >
                 <span><MapPin size={18} /> تغيير المدينة ({city})</span>
               </button>
-              <button
-                className="choice-btn"
-                style={{ background: '#f8fafc', borderColor: '#cbd5e1', color: '#0b315d' }}
-                onClick={handleOpenAdmin}
-              >
-                <span><ShieldCheck size={18} color="#09569c" /> لوحة تحكم الإدارة (Admin)</span>
-              </button>
+              {(isReviewEnvironment() || (user && user.role === 'admin')) && (
+                <button
+                  className="choice-btn"
+                  style={{ background: '#f8fafc', borderColor: '#cbd5e1', color: '#0b315d' }}
+                  onClick={handleOpenAdmin}
+                >
+                  <span><ShieldCheck size={18} color="#09569c" /> لوحة تحكم الإدارة (Admin)</span>
+                </button>
+              )}
               <button
                 className="choice-btn"
                 style={{ background: '#f0fdf4', borderColor: '#bbf7d0', color: '#166534' }}

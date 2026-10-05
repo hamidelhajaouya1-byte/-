@@ -1,0 +1,142 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile document storing authentication and account role details.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string", "description": "Display name of the user" },
+        "phone": { "type": "string", "description": "Phone number of user" },
+        "role": { "type": "string", "enum": ["customer", "provider", "admin"], "description": "Account role" },
+        "city": { "type": "string", "description": "Primary city name" },
+        "cityId": { "type": "string", "description": "City identifier" },
+        "isAdmin": { "type": "boolean", "description": "Admin privilege flag" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "ISO timestamp of account creation" }
+      },
+      "required": ["uid", "name", "phone", "role", "createdAt"]
+    },
+    "Provider": {
+      "title": "Provider",
+      "description": "Professional craftsman profile document.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique provider identifier matching user or generated ID" },
+        "userId": { "type": "string", "description": "UID of the provider account owner" },
+        "name": { "type": "string", "description": "Full name of the professional craftsman" },
+        "profession": { "type": "string", "description": "Profession label" },
+        "professionId": { "type": "string", "description": "Profession category slug" },
+        "city": { "type": "string", "description": "City name" },
+        "cityId": { "type": "string", "description": "City ID" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "rating": { "type": "number", "description": "Average rating score from 1.0 to 5.0" },
+        "reviewsCount": { "type": "number", "description": "Total number of reviews" },
+        "verified": { "type": "boolean", "description": "Verification status flag" },
+        "image": { "type": "string", "description": "Profile photo URL" },
+        "badge": { "type": "string", "description": "Special status badge" },
+        "isActive": { "type": "boolean", "description": "Availability and active status flag" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name", "profession", "city", "phone", "createdAt"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Client profile seeking services.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique customer UID" },
+        "name": { "type": "string", "description": "Customer name" },
+        "phone": { "type": "string", "description": "Customer phone" },
+        "city": { "type": "string", "description": "City of residence" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name", "phone", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Customer review and rating submitted for a provider.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Review unique identifier" },
+        "providerId": { "type": "string", "description": "ID of the reviewed provider" },
+        "customerUid": { "type": "string", "description": "UID of the reviewing customer" },
+        "customerName": { "type": "string", "description": "Display name of the reviewer" },
+        "rating": { "type": "number", "description": "Rating score between 1 and 5" },
+        "comment": { "type": "string", "description": "Written review feedback" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Submission timestamp" },
+        "isActive": { "type": "boolean", "description": "Status flag for moderation" }
+      },
+      "required": ["id", "providerId", "customerUid", "customerName", "rating", "comment", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification sent to users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Notification document ID" },
+        "recipientUid": { "type": "string", "description": "UID of the recipient user" },
+        "actorUid": { "type": "string", "description": "UID of the user who triggered the action" },
+        "actorName": { "type": "string", "description": "Name of the acting user" },
+        "type": { "type": "string", "description": "Notification type (e.g., review, like, message)" },
+        "message": { "type": "string", "description": "Notification message text" },
+        "read": { "type": "boolean", "description": "Read status flag" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "recipientUid", "message", "read", "createdAt"]
+    },
+    "Favorite": {
+      "title": "Favorite",
+      "description": "Bookmarked provider record saved by a customer.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique favorite ID" },
+        "customerId": { "type": "string", "description": "Customer Auth UID" },
+        "providerId": { "type": "string", "description": "Bookmarked provider ID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Date bookmarked" }
+      },
+      "required": ["id", "customerId", "providerId", "createdAt"]
+    },
+    "Like": {
+      "title": "Like",
+      "description": "Endorsement like given to a provider profile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique like record ID" },
+        "userId": { "type": "string", "description": "User Auth UID who liked" },
+        "providerId": { "type": "string", "description": "Target provider ID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of like" }
+      },
+      "required": ["id", "userId", "providerId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profile collection keyed by Firebase Auth UID."
+    },
+    "/providers/{providerId}": {
+      "schema": { "$ref": "Provider" },
+      "description": "Craftsmen and service provider directory collection."
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "Customer" },
+      "description": "Registered customer profiles collection."
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "Review" },
+      "description": "Provider reviews and customer ratings collection."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "Notification" },
+      "description": "User notification inbox collection."
+    },
+    "/favorites/{favoriteId}": {
+      "schema": { "$ref": "Favorite" },
+      "description": "Saved favorite providers collection."
+    },
+    "/likes/{likeId}": {
+      "schema": { "$ref": "Like" },
+      "description": "Provider likes and appreciation collection."
+    }
+  }
+}

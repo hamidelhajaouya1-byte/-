@@ -10,10 +10,15 @@ import {
   orderBy,
   serverTimestamp
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebaseConfig';
-import { createNotification } from './notificationService';
+import { db, isFirebaseConfigured } from './firebaseConfig.js';
+import { createNotification } from './notificationService.js';
 
 const REVIEWS_COLLECTION = 'reviews';
+
+const safeStorage = {
+  getItem: (key) => (typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null),
+  setItem: (key, val) => { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); }
+};
 
 
 /**
@@ -77,7 +82,7 @@ export async function getProviderReviews(providerId, seedReviews = []) {
 
   // Fallback / Simulated storage for environments without live Firestore credentials
   if (!isFirebaseConfigured || !db) {
-    let localStore = JSON.parse(localStorage.getItem('b4it_m3alm_reviews_db') || '[]');
+    let localStore = JSON.parse(safeStorage.getItem('b4it_m3alm_reviews_db') || '[]');
     let filtered = localStore
       .filter(r => r.providerId === String(providerId) && r.isActive !== false)
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
@@ -96,7 +101,7 @@ export async function getProviderReviews(providerId, seedReviews = []) {
         updatedAt: new Date(Date.now() - (idx + 1) * 86400000 * 3).toISOString()
       }));
       localStore = [...localStore, ...seeded];
-      localStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(localStore));
+      safeStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(localStore));
       filtered = seeded;
     }
 
@@ -177,7 +182,7 @@ export async function getUserReview(providerId, customerUid) {
   const reviewId = generateReviewId(customerUid, providerId);
 
   if (!isFirebaseConfigured || !db) {
-    const localStore = JSON.parse(localStorage.getItem('b4it_m3alm_reviews_db') || '[]');
+    const localStore = JSON.parse(safeStorage.getItem('b4it_m3alm_reviews_db') || '[]');
     const found = localStore.find(r => r.id === reviewId && r.isActive !== false);
     return found ? { ...found, formattedDate: formatReviewDate(found.createdAt) } : null;
   }
@@ -221,7 +226,7 @@ export async function saveOrUpdateReview({ providerId, customerUid, customerName
 
   // 1. Fallback local persistence
   if (!isFirebaseConfigured || !db) {
-    const localStore = JSON.parse(localStorage.getItem('b4it_m3alm_reviews_db') || '[]');
+    const localStore = JSON.parse(safeStorage.getItem('b4it_m3alm_reviews_db') || '[]');
     const existingIndex = localStore.findIndex(r => r.id === reviewId);
 
     const nowIso = new Date().toISOString();
@@ -254,7 +259,7 @@ export async function saveOrUpdateReview({ providerId, customerUid, customerName
       localStore.push(updatedRecord);
     }
 
-    localStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(localStore));
+    safeStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(localStore));
     const stats = await recalculateProviderRating(providerId);
 
     // Send notification to provider on new review
@@ -335,9 +340,9 @@ export async function deleteReview(providerId, customerUid) {
   const reviewId = generateReviewId(customerUid, providerId);
 
   if (!isFirebaseConfigured || !db) {
-    const localStore = JSON.parse(localStorage.getItem('b4it_m3alm_reviews_db') || '[]');
+    const localStore = JSON.parse(safeStorage.getItem('b4it_m3alm_reviews_db') || '[]');
     const updated = localStore.map(r => r.id === reviewId ? { ...r, isActive: false } : r);
-    localStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(updated));
+    safeStorage.setItem('b4it_m3alm_reviews_db', JSON.stringify(updated));
     await recalculateProviderRating(providerId);
     return true;
   }
@@ -366,7 +371,7 @@ export async function recalculateProviderRating(providerId) {
   let activeReviews = [];
 
   if (!isFirebaseConfigured || !db) {
-    const localStore = JSON.parse(localStorage.getItem('b4it_m3alm_reviews_db') || '[]');
+    const localStore = JSON.parse(safeStorage.getItem('b4it_m3alm_reviews_db') || '[]');
     activeReviews = localStore.filter(r => r.providerId === String(providerId) && r.isActive !== false);
   } else {
     try {
@@ -400,11 +405,11 @@ export async function recalculateProviderRating(providerId) {
   if (isFirebaseConfigured && db) {
     try {
       const providerDocRef = doc(db, 'providers', String(providerId));
-      await updateDoc(providerDocRef, {
+      await setDoc(providerDocRef, {
         rating: parseFloat(avgRating),
         reviewsCount: reviewsCount,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
     } catch {
       // Non-blocking if provider is statically seeded or not yet written
     }

@@ -8,9 +8,9 @@ import {
   setDoc,
   serverTimestamp
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebaseConfig';
-import { normalizeMoroccanPhone } from '../utils/phoneUtils';
-import { getProviderReviews } from './reviewService';
+import { db, isFirebaseConfigured } from './firebaseConfig.js';
+import { normalizeMoroccanPhone } from '../utils/phoneUtils.js';
+import { getProviderReviews } from './reviewService.js';
 
 const PROVIDERS_COLLECTION = 'providers';
 
@@ -38,7 +38,8 @@ export function normalizeSearchTerm(str) {
 export function isTombstonedProvider(providerId) {
   if (!providerId) return false;
   try {
-    const tombstones = JSON.parse(localStorage.getItem('b4it_m3alm_tombstones') || '[]');
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('b4it_m3alm_tombstones') : null;
+    const tombstones = JSON.parse(raw || '[]');
     return tombstones.includes(String(providerId));
   } catch {
     return false;
@@ -237,4 +238,98 @@ export async function getProviderDetails(providerId, seedFallbackProviders = [])
   }
 
   return { notFound: true };
+}
+
+/**
+ * Fetches real providers registered in Firestore who match a specific profession/category and optional city
+ */
+export async function getRealProvidersByProfession({ professionName, city = 'جميع المدن' }) {
+  if (!professionName) return [];
+
+  const cleanProfNorm = normalizeSearchTerm(professionName);
+  let list = [];
+
+  if (isFirebaseConfigured && db) {
+    try {
+      const collRef = collection(db, PROVIDERS_COLLECTION);
+      const snapshot = await getDocs(collRef);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data.isActive !== false && !isTombstonedProvider(docSnap.id)) {
+          list.push({
+            id: docSnap.id,
+            name: data.fullName || data.name || 'معلم محترف',
+            fullName: data.fullName || data.name || 'معلم محترف',
+            job: data.subCraft ? `${data.professionName || data.job} (${data.subCraft})` : (data.professionName || data.job || data.professionId || 'معلم مهني'),
+            professionName: data.professionName || data.job || 'معلم مهني',
+            subCraft: data.subCraft || '',
+            category: data.professionName || data.category || data.job,
+            city: data.city || data.cityId || 'المغرب',
+            cityId: data.cityId || data.city || 'المغرب',
+            phone: data.phone || '',
+            whatsapp: data.whatsapp || data.phone || '',
+            rating: data.rating ? String(data.rating) : '5.0',
+            reviews: data.reviewsCount !== undefined ? data.reviewsCount : 0,
+            img: data.imageUrl || data.img || 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&auto=format&fit=crop&q=80',
+            bio: data.description || data.bio || '',
+            services: Array.isArray(data.services) && data.services.length > 0 ? data.services : ['خدمات وصيانة سريعة', 'استشارات مهنية'],
+            completedJobs: data.completedJobs || 12,
+            experience: data.experience || 'معتمد'
+          });
+        }
+      });
+    } catch (err) {
+      console.warn('[ProviderService] Real profession fetch error:', err.message);
+    }
+  }
+
+  // Also check local registered users for dev/review environments
+  try {
+    const rawUsers = typeof localStorage !== 'undefined' ? localStorage.getItem('b4it_m3alm_registered_users') : null;
+    const localUsers = JSON.parse(rawUsers || '[]');
+    localUsers.forEach(u => {
+      if (u.role === 'provider' && u.isActive !== false && !isTombstonedProvider(u.uid)) {
+        if (!list.some(existing => existing.id === u.uid)) {
+          list.push({
+            id: u.uid,
+            name: u.fullName || 'معلم محترف',
+            fullName: u.fullName || 'معلم محترف',
+            job: u.professionName || 'معلم مهني',
+            professionName: u.professionName || 'معلم مهني',
+            category: u.professionName,
+            city: u.cityId || 'المغرب',
+            cityId: u.cityId || 'المغرب',
+            phone: u.phone || '',
+            whatsapp: u.whatsapp || u.phone || '',
+            rating: '5.0',
+            reviews: 0,
+            img: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&auto=format&fit=crop&q=80',
+            bio: `معلم مهني معتمد في ${u.professionName || 'مجاله'}`,
+            services: ['خدمات وصيانة سريعة', 'استشارات مهنية'],
+            completedJobs: 12,
+            experience: 'معتمد'
+          });
+        }
+      }
+    });
+  } catch {}
+
+  // Filter strictly by the chosen profession
+  return list.filter(p => {
+    const pProfNorm = normalizeSearchTerm(p.professionName || p.category || p.job);
+    const matchesProfession = (
+      pProfNorm === cleanProfNorm ||
+      pProfNorm.includes(cleanProfNorm) ||
+      cleanProfNorm.includes(pProfNorm)
+    );
+    if (!matchesProfession) return false;
+
+    // Filter by city if selected
+    if (city && city !== 'جميع المدن') {
+      const pCity = p.city || p.cityId;
+      if (pCity !== city) return false;
+    }
+
+    return true;
+  });
 }

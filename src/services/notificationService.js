@@ -14,13 +14,18 @@ import {
   serverTimestamp,
   writeBatch
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebaseConfig';
-import { formatReviewDate } from './reviewService';
+import { db, isFirebaseConfigured } from './firebaseConfig.js';
+import { formatReviewDate } from './reviewService.js';
 
 const NOTIFICATIONS_COLLECTION = 'notifications';
 const LIKES_COLLECTION = 'likes';
 const LOCAL_NOTIFS_KEY = 'b4it_m3alm_notifications_db';
 const LOCAL_LIKES_KEY = 'b4it_m3alm_likes_db';
+
+const safeStorage = {
+  getItem: (key) => (typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null),
+  setItem: (key, val) => { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); }
+};
 
 /**
  * Creates an interaction notification (review, rating, or like)
@@ -57,13 +62,15 @@ export async function createNotification({
 
   // Local fallback storage
   try {
-    const localStore = JSON.parse(localStorage.getItem(LOCAL_NOTIFS_KEY) || '[]');
+    const localStore = JSON.parse(safeStorage.getItem(LOCAL_NOTIFS_KEY) || '[]');
     const newId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     localStore.unshift({ id: newId, ...notifData });
-    localStorage.setItem(LOCAL_NOTIFS_KEY, JSON.stringify(localStore));
+    safeStorage.setItem(LOCAL_NOTIFS_KEY, JSON.stringify(localStore));
 
     // Dispatch event for local listener if any
-    window.dispatchEvent(new CustomEvent('b4it_local_notifications_updated'));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('b4it_local_notifications_updated'));
+    }
   } catch (err) {
     console.warn('[NotificationService] Local store error:', err);
   }

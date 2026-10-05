@@ -10,17 +10,23 @@ import {
   where,
   serverTimestamp
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from './firebaseConfig';
-import { handleCustomerAccountDeleted } from './reviewService';
+import { db, isFirebaseConfigured } from './firebaseConfig.js';
+import { handleCustomerAccountDeleted } from './reviewService.js';
 
 const TOMBSTONES_STORAGE_KEY = 'b4it_m3alm_tombstones';
+
+const safeStorage = {
+  getItem: (key) => (typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null),
+  setItem: (key, val) => { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); },
+  removeItem: (key) => { if (typeof localStorage !== 'undefined') localStorage.removeItem(key); }
+};
 
 /**
  * Reads all tombstone IDs (deleted accounts)
  */
 export function getTombstonesList() {
   try {
-    return JSON.parse(localStorage.getItem(TOMBSTONES_STORAGE_KEY) || '[]');
+    return JSON.parse(safeStorage.getItem(TOMBSTONES_STORAGE_KEY) || '[]');
   } catch {
     return [];
   }
@@ -38,7 +44,7 @@ export async function registerTombstone(id, type = 'provider', metadata = {}) {
     const list = getTombstonesList();
     if (!list.includes(idStr)) {
       list.push(idStr);
-      localStorage.setItem(TOMBSTONES_STORAGE_KEY, JSON.stringify(list));
+      safeStorage.setItem(TOMBSTONES_STORAGE_KEY, JSON.stringify(list));
     }
   } catch (err) {
     console.warn('[Admin] Local tombstone record error:', err);
@@ -507,5 +513,227 @@ export async function bulkDeleteAdmin(type, ids = []) {
       await deleteCustomerAdmin(id);
     }
   }
+  return true;
+}
+
+/**
+ * Fetches all registered accounts (customers, providers, admins) from Firestore & local storage
+ */
+export async function getAllAccountsAdmin(seedProviders = []) {
+  const tombstones = getTombstonesList();
+  const accountsMap = new Map();
+
+  // 1. Fetch from live Firestore if configured
+  if (isFirebaseConfigured && db) {
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      usersSnap.forEach(d => {
+        if (!tombstones.includes(d.id)) {
+          const data = d.data();
+          accountsMap.set(d.id, {
+            uid: d.id,
+            id: d.id,
+            fullName: data.fullName || data.name || 'مستخدم مسجل',
+            phone: data.phone || '',
+            whatsapp: data.whatsapp || data.phone || '',
+            role: data.role || 'customer',
+            cityId: data.cityId || data.city || 'الرباط',
+            professionName: data.professionName || data.job || '',
+            isActive: data.isActive !== false,
+            createdAt: data.createdAt?.toMillis ? new Date(data.createdAt.toMillis()).toISOString() : data.createdAt || new Date().toISOString(),
+            updatedAt: data.updatedAt?.toMillis ? new Date(data.updatedAt.toMillis()).toISOString() : data.updatedAt || null,
+            bio: data.bio || data.description || '',
+            rating: data.rating ? String(data.rating) : '5.0',
+            reviewsCount: data.reviewsCount || 0,
+            source: 'firestore_user'
+          });
+        }
+      });
+
+      // Also merge with providers collection
+      const provSnap = await getDocs(collection(db, 'providers'));
+      provSnap.forEach(d => {
+        if (!tombstones.includes(d.id)) {
+          const pData = d.data();
+          if (accountsMap.has(d.id)) {
+            const existing = accountsMap.get(d.id);
+            accountsMap.set(d.id, {
+              ...existing,
+              rating: pData.rating ? String(pData.rating) : existing.rating || '5.0',
+              reviewsCount: pData.reviewsCount || existing.reviewsCount || 0,
+              professionName: existing.professionName || pData.professionName || pData.job || '',
+              bio: existing.bio || pData.description || pData.bio || '',
+              address: pData.address || existing.address || ''
+            });
+          } else {
+            accountsMap.set(d.id, {
+              uid: d.id,
+              id: d.id,
+              fullName: pData.fullName || pData.name || 'معلم مهني',
+              phone: pData.phone || '',
+              whatsapp: pData.whatsapp || pData.phone || '',
+              role: 'provider',
+              cityId: pData.city || pData.cityId || 'الرباط',
+              professionName: pData.professionName || pData.job || 'معلم مهني',
+              rating: pData.rating ? String(pData.rating) : '5.0',
+              reviewsCount: pData.reviewsCount || 0,
+              isActive: pData.isActive !== false,
+              createdAt: pData.createdAt?.toMillis ? new Date(pData.createdAt.toMillis()).toISOString() : pData.createdAt || new Date().toISOString(),
+              bio: pData.description || pData.bio || '',
+              source: 'firestore_provider'
+            });
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('[Admin] Firestore accounts list error:', err);
+    }
+  }
+
+  // 2. Local storage fallback merge
+  try {
+    const localUsers = JSON.parse(safeStorage.getItem('b4it_m3alm_registered_users') || '[]');
+    localUsers.forEach(u => {
+      const idKey = u.uid || u.id;
+      if (idKey && !tombstones.includes(idKey) && !accountsMap.has(idKey)) {
+        accountsMap.set(idKey, {
+          uid: idKey,
+          id: idKey,
+          fullName: u.fullName || 'مستخدم',
+          phone: u.phone || '',
+          whatsapp: u.whatsapp || u.phone || '',
+          role: u.role || 'customer',
+          cityId: u.cityId || 'الرباط',
+          professionName: u.professionName || '',
+          isActive: u.isActive !== false,
+          createdAt: u.createdAt || new Date().toISOString(),
+          source: 'local_storage'
+        });
+      }
+    });
+
+    if (seedProviders && seedProviders.length > 0) {
+      const localOverrides = JSON.parse(safeStorage.getItem('b4it_m3alm_admin_providers') || '[]');
+      seedProviders.forEach(sp => {
+        if (!tombstones.includes(sp.id) && !accountsMap.has(sp.id)) {
+          const ovr = localOverrides.find(o => o.id === sp.id);
+          accountsMap.set(sp.id, {
+            uid: sp.id,
+            id: sp.id,
+            fullName: (ovr && (ovr.fullName || ovr.name)) || sp.name,
+            phone: (ovr && ovr.phone) || sp.phone || '',
+            whatsapp: (ovr && ovr.whatsapp) || sp.whatsapp || '',
+            role: 'provider',
+            cityId: (ovr && (ovr.city || ovr.cityId)) || sp.city || 'الرباط',
+            professionName: (ovr && (ovr.professionName || ovr.job)) || sp.job || '',
+            rating: sp.rating || '5.0',
+            reviewsCount: sp.reviews || 0,
+            isActive: ovr ? ovr.isActive !== false : (sp.isActive !== false),
+            createdAt: sp.createdAt || '2026-01-01T00:00:00.000Z',
+            bio: (ovr && (ovr.bio || ovr.description)) || sp.bio || '',
+            source: 'seed_catalog'
+          });
+        }
+      });
+    }
+  } catch {}
+
+  const list = Array.from(accountsMap.values());
+  list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return list;
+}
+
+/**
+ * Permanently deletes any user account and completely cascades deletion of all associated data:
+ * - /users/{uid}
+ * - /customers/{uid}
+ * - /providers/{uid}
+ * - /favorites (both as customer and as target provider)
+ * - /reviews (both created reviews and reviews received)
+ * - /notifications (both as recipient and as actor)
+ * - Registers permanent Tombstone in /tombstones/{uid}
+ */
+export async function deleteAccountCompleteAdmin(uid, role = 'customer') {
+  if (!uid) throw new Error('معرف الحساب مطلوب');
+  const uidStr = String(uid);
+
+  // 1. Permanent Tombstone registration
+  await registerTombstone(uidStr, role || 'user', { deletedBy: 'admin', deletedAtStr: new Date().toISOString() });
+
+  // 2. Cascading deletion in Firestore
+  if (isFirebaseConfigured && db) {
+    // 2a. Delete users doc
+    try {
+      await deleteDoc(doc(db, 'users', uidStr));
+    } catch (err) {
+      console.warn('[Admin] Delete user doc error:', err.message);
+    }
+
+    // 2b. Delete customer / provider specific doc
+    try {
+      await deleteDoc(doc(db, 'customers', uidStr));
+    } catch {}
+    try {
+      await deleteDoc(doc(db, 'providers', uidStr));
+    } catch {}
+
+    // 2c. Cascading deletion of Favorites
+    try {
+      const favCustomerSnap = await getDocs(query(collection(db, 'favorites'), where('customerId', '==', uidStr)));
+      favCustomerSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+      const favProviderSnap = await getDocs(query(collection(db, 'favorites'), where('providerId', '==', uidStr)));
+      favProviderSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+    } catch (err) {
+      console.warn('[Admin] Cascading favorites deletion error:', err.message);
+    }
+
+    // 2d. Cascading deletion of Reviews
+    try {
+      const reviewCustomerSnap = await getDocs(query(collection(db, 'reviews'), where('customerUid', '==', uidStr)));
+      reviewCustomerSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+      const reviewProviderSnap = await getDocs(query(collection(db, 'reviews'), where('providerId', '==', uidStr)));
+      reviewProviderSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+    } catch (err) {
+      console.warn('[Admin] Cascading reviews deletion error:', err.message);
+    }
+
+    // 2e. Cascading deletion of Notifications
+    try {
+      const notifSnap = await getDocs(query(collection(db, 'notifications'), where('recipientUid', '==', uidStr)));
+      notifSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+      const notifActorSnap = await getDocs(query(collection(db, 'notifications'), where('actorUid', '==', uidStr)));
+      notifActorSnap.forEach(async (d) => {
+        try { await deleteDoc(d.ref); } catch {}
+      });
+    } catch (err) {
+      console.warn('[Admin] Cascading notifications deletion error:', err.message);
+    }
+  }
+
+  // 3. Clean local storage caches
+  try {
+    const localUsers = JSON.parse(safeStorage.getItem('b4it_m3alm_registered_users') || '[]');
+    const filteredUsers = localUsers.filter(u => u.uid !== uidStr && u.id !== uidStr);
+    safeStorage.setItem('b4it_m3alm_registered_users', JSON.stringify(filteredUsers));
+
+    const localProviders = JSON.parse(safeStorage.getItem('b4it_m3alm_admin_providers') || '[]');
+    const filteredProviders = localProviders.filter(p => p.id !== uidStr);
+    safeStorage.setItem('b4it_m3alm_admin_providers', JSON.stringify(filteredProviders));
+
+    if (safeStorage.getItem('b4it_m3alm_session_uid') === uidStr) {
+      safeStorage.removeItem('b4it_m3alm_session_uid');
+    }
+  } catch {}
+
   return true;
 }

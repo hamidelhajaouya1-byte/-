@@ -1,164 +1,41 @@
 import {
-  signInWithPhoneNumber,
-  RecaptchaVerifier,
   signOut,
-  onAuthStateChanged
+  onAuthStateChanged,
+  signInWithCustomToken,
+  deleteUser
 } from 'firebase/auth';
 import {
   doc,
   getDoc,
   setDoc,
-  collection,
-  query,
-  where,
-  getDocs,
+  deleteDoc,
   serverTimestamp
 } from 'firebase/firestore';
-import { auth, db, isFirebaseConfigured } from './firebaseConfig';
-import { normalizeMoroccanPhone, isValidMoroccanPhone } from '../utils/phoneUtils';
-import { COLLECTIONS, createProvider } from './firestoreService';
+import { auth, db, isFirebaseConfigured } from './firebaseConfig.js';
+import { normalizeMoroccanPhone, isValidMoroccanPhone } from '../utils/phoneUtils.js';
+import { createProvider } from './firestoreService.js';
+
+const safeStorage = {
+  getItem: (key) => (typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null),
+  setItem: (key, val) => { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); },
+  removeItem: (key) => { if (typeof localStorage !== 'undefined') localStorage.removeItem(key); }
+};
 
 /**
- * Checks whether a normalized phone number already exists in the `users` collection.
- * Prevents duplicate accounts with the same phone number.
+ * Validates password format:
+ * - Minimum 4 characters/digits
+ * - Accepts: 4 exactly, 5+, letters only (abcd), numbers only (1234), alphanumeric (ab12)
+ * - No special characters required
  */
-export async function checkPhoneExists(rawPhone) {
-  const normalizedPhone = normalizeMoroccanPhone(rawPhone);
-  if (!normalizedPhone) return { exists: false };
-
-  if (!isFirebaseConfigured || !db) {
-    // Fallback simulation check using local storage cache for testing
-    const localAccounts = JSON.parse(localStorage.getItem('b4it_m3alm_registered_users') || '[]');
-    const found = localAccounts.find(u => u.normalizedPhone === normalizedPhone);
-    return {
-      exists: Boolean(found),
-      user: found || null
-    };
+export function validatePassword(password) {
+  if (!password || typeof password !== 'string') {
+    return { isValid: false, message: 'كلمة السر مطلوبة.' };
   }
-
-  try {
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('normalizedPhone', '==', normalizedPhone));
-    const snapshot = await getDocs(q);
-
-    if (!snapshot.empty) {
-      const userDoc = snapshot.docs[0];
-      return {
-        exists: true,
-        user: { uid: userDoc.id, ...userDoc.data() }
-      };
-    }
-    return { exists: false, user: null };
-  } catch (error) {
-    console.error('[AuthService] Error checking phone existence:', error);
-    // If permission or network issue, fail safely
-    return { exists: false, error: error.message };
+  const clean = password.trim();
+  if (clean.length < 4) {
+    return { isValid: false, message: 'كلمة السر يجب أن تتكون من 4 أحرف أو أرقام على الأقل.' };
   }
-}
-
-/**
- * Initializes a Firebase reCAPTCHA verifier for Phone Auth
- */
-export function setupRecaptcha(containerId = 'recaptcha-container') {
-  if (!isFirebaseConfigured || !auth) {
-    return null;
-  }
-
-  try {
-    if (window.recaptchaVerifier) {
-      window.recaptchaVerifier.clear();
-      window.recaptchaVerifier = null;
-    }
-
-    const verifier = new RecaptchaVerifier(auth, containerId, {
-      size: 'invisible',
-      callback: () => {
-        // reCAPTCHA solved
-      },
-      'expired-callback': () => {
-        console.warn('[AuthService] reCAPTCHA expired. Resetting.');
-      }
-    });
-
-    verifier.render();
-    window.recaptchaVerifier = verifier;
-    return verifier;
-  } catch (error) {
-    console.error('[AuthService] Error setting up reCAPTCHA:', error);
-    return null;
-  }
-}
-
-/**
- * Sends OTP to a normalized Moroccan phone number
- */
-export async function sendOtp(rawPhone, recaptchaVerifier = null) {
-  const normalizedPhone = normalizeMoroccanPhone(rawPhone);
-
-  if (!isValidMoroccanPhone(normalizedPhone)) {
-    throw new Error('يرجى إدخال رقم هاتف مغربي صحيح (مثال: 0612345678 أو 0712345678)');
-  }
-
-  if (!isFirebaseConfigured || !auth) {
-    // Simulated OTP for environment without live SMS keys
-    console.info(`[AuthService] Simulated OTP generated for ${normalizedPhone}. Code: 123456`);
-    return {
-      isSimulated: true,
-      normalizedPhone,
-      confirm: async (code) => {
-        if (code === '123456' || code.length === 6) {
-          // Generate or retrieve persistent pseudo UID for this phone
-          const pseudoUid = 'usr_' + btoa(normalizedPhone).replace(/=/g, '').slice(0, 16);
-          return {
-            user: {
-              uid: pseudoUid,
-              phoneNumber: normalizedPhone
-            }
-          };
-        }
-        throw new Error('رمز التحقق (OTP) غير صحيح');
-      }
-    };
-  }
-
-  try {
-    const verifier = recaptchaVerifier || window.recaptchaVerifier || setupRecaptcha();
-    const confirmationResult = await signInWithPhoneNumber(auth, normalizedPhone, verifier);
-    return confirmationResult;
-  } catch (error) {
-    console.error('[AuthService] Error sending OTP:', error);
-    let errorMsg = 'تعذر إرسال رمز التحقق (OTP). يرجى المحاولة لاحقاً.';
-    if (error.code === 'auth/invalid-phone-number') {
-      errorMsg = 'صيغة رقم الهاتف غير صالحة لدى مزود الخدمة.';
-    } else if (error.code === 'auth/too-many-requests') {
-      errorMsg = 'تم تجاوز الحد الأقصى للمحاولات. يرجى الانتظار بضع دقائق.';
-    } else if (error.code === 'auth/quota-exceeded') {
-      errorMsg = 'تم تجاوز حصة الرسائل القصيرة SMS المتاحة.';
-    }
-    throw new Error(errorMsg);
-  }
-}
-
-/**
- * Verifies the OTP code submitted by the user
- */
-export async function verifyOtp(confirmationResult, otpCode) {
-  if (!confirmationResult || !confirmationResult.confirm) {
-    throw new Error('جلسة التحقق غير صالحة. يرجى إعادة إرسال الرمز.');
-  }
-
-  const cleanCode = String(otpCode || '').trim();
-  if (cleanCode.length !== 6) {
-    throw new Error('رمز التحقق يتكون من 6 أرقام');
-  }
-
-  try {
-    const userCredential = await confirmationResult.confirm(cleanCode);
-    return userCredential.user;
-  } catch (error) {
-    console.error('[AuthService] Error verifying OTP:', error);
-    throw new Error('رمز التحقق غير صحيح أو انتهت صلاحيته.');
-  }
+  return { isValid: true, message: '' };
 }
 
 /**
@@ -167,32 +44,32 @@ export async function verifyOtp(confirmationResult, otpCode) {
 export async function getUserProfile(uid) {
   if (!uid) return null;
 
-  if (!isFirebaseConfigured || !db) {
-    // Read from simulated storage
-    const localAccounts = JSON.parse(localStorage.getItem('b4it_m3alm_registered_users') || '[]');
-    return localAccounts.find(u => u.uid === uid) || null;
-  }
+  if (isFirebaseConfigured && db) {
+    try {
+      const userDocRef = doc(db, 'users', String(uid));
+      const snapshot = await getDoc(userDocRef);
 
-  try {
-    const userDocRef = doc(db, 'users', String(uid));
-    const snapshot = await getDoc(userDocRef);
-
-    if (snapshot.exists()) {
-      return {
-        uid: snapshot.id,
-        ...snapshot.data()
-      };
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        return {
+          uid: snapshot.id,
+          ...data,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : data.createdAt,
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt
+        };
+      }
+    } catch (error) {
+      console.warn(`[AuthService] Firestore read notice for ${uid}:`, error.message);
     }
-    return null;
-  } catch (error) {
-    console.error(`[AuthService] Error fetching user profile ${uid}:`, error);
-    return null;
   }
+
+  // Fallback to local session storage
+  const localAccounts = JSON.parse(safeStorage.getItem('b4it_m3alm_registered_users') || '[]');
+  return localAccounts.find(u => u.uid === uid) || null;
 }
 
 /**
  * Creates or updates user profile in `users` collection with strict validation
- * Automatically creates linked record in `providers` if role === 'provider'
  */
 export async function createUserProfile({
   uid,
@@ -202,103 +79,236 @@ export async function createUserProfile({
   cityId = 'الرباط',
   professionId = '',
   professionName = '',
+  subCraft = '',
   whatsapp = ''
 }) {
   if (!uid) throw new Error('معرف المستخدم uid مطلوب');
 
-  const normalizedPhone = normalizeMoroccanPhone(phone);
-  if (!isValidMoroccanPhone(normalizedPhone)) {
-    throw new Error('رقم الهاتف غير صالح.');
-  }
-
-  // Security check: Role must be strictly 'customer' or 'provider'
-  if (role !== 'customer' && role !== 'provider') {
-    throw new Error('نوع الحساب غير صالح. يجب أن يكون زبون أو معلم.');
-  }
-
-  // Check phone duplication
-  const existing = await checkPhoneExists(normalizedPhone);
-  if (existing.exists && existing.user && existing.user.uid !== uid) {
-    throw new Error('رقم الهاتف هذا مرتبط بحساب آخر بالفعل.');
-  }
-
+  const normalizedPhone = normalizeMoroccanPhone(phone) || phone;
+  const nowIso = new Date().toISOString();
   const userPayload = {
     uid: String(uid),
-    role,
+    role: role === 'provider' ? 'provider' : 'customer',
     fullName: String(fullName || '').trim(),
+    name: String(fullName || '').trim(),
     phone: String(phone || '').trim(),
     normalizedPhone,
-    whatsapp: normalizeMoroccanPhone(whatsapp || normalizedPhone),
+    whatsapp: normalizeMoroccanPhone(whatsapp || normalizedPhone) || phone,
     cityId: String(cityId || 'الرباط'),
+    city: String(cityId || 'الرباط'),
     professionId: role === 'provider' ? String(professionId || '') : null,
     professionName: role === 'provider' ? String(professionName || '') : null,
+    subCraft: role === 'provider' ? String(subCraft || '') : null,
     isActive: true,
-    isVerified: false,
-    updatedAt: serverTimestamp()
+    isVerified: true,
+    updatedAt: nowIso
   };
 
-  if (!isFirebaseConfigured || !db) {
-    // Save to local test store
-    const localAccounts = JSON.parse(localStorage.getItem('b4it_m3alm_registered_users') || '[]');
-    const filtered = localAccounts.filter(u => u.uid !== uid);
-    const completeLocal = {
-      ...userPayload,
-      createdAt: new Date().toISOString()
-    };
-    filtered.push(completeLocal);
-    localStorage.setItem('b4it_m3alm_registered_users', JSON.stringify(filtered));
-    return completeLocal;
-  }
+  if (isFirebaseConfigured && db) {
+    try {
+      const userDocRef = doc(db, 'users', String(uid));
+      await setDoc(userDocRef, {
+        ...userPayload,
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp()
+      }, { merge: true });
 
-  try {
-    const userDocRef = doc(db, 'users', String(uid));
-    const existingSnap = await getDoc(userDocRef);
-
-    if (!existingSnap.exists()) {
-      userPayload.createdAt = serverTimestamp();
-    }
-
-    await setDoc(userDocRef, userPayload, { merge: true });
-
-    // If role is provider, synchronize with `providers` collection
-    if (role === 'provider') {
-      try {
+      if (role === 'provider') {
         await createProvider({
           id: String(uid),
           fullName: userPayload.fullName,
           phone: userPayload.phone,
           whatsapp: userPayload.whatsapp,
           cityId: userPayload.cityId,
+          city: userPayload.cityId,
           professionId: userPayload.professionId,
           professionName: userPayload.professionName,
+          subCraft: userPayload.subCraft,
           address: userPayload.cityId,
-          description: `معلم محترف في ${userPayload.professionName || 'مجاله'}`,
+          description: `معلم محترف في ${userPayload.professionName || 'مجاله'}${userPayload.subCraft ? ` - ${userPayload.subCraft}` : ''}`,
           imageUrl: '',
           rating: 5.0,
           reviewsCount: 0,
           isActive: true,
-          isVerified: false
+          isVerified: true
         }, String(uid));
-      } catch (err) {
-        console.warn('[AuthService] Non-blocking provider sync note:', err.message);
+      } else {
+        const custDocRef = doc(db, 'customers', String(uid));
+        await setDoc(custDocRef, {
+          id: String(uid),
+          fullName: userPayload.fullName,
+          phone: userPayload.phone,
+          city: userPayload.cityId,
+          role: 'customer',
+          updatedAt: serverTimestamp()
+        }, { merge: true });
       }
+    } catch (err) {
+      console.warn('[AuthService] Firestore sync notice:', err.message);
     }
-
-    return { uid, ...userPayload };
-  } catch (error) {
-    console.error('[AuthService] Error writing user document:', error);
-    throw error;
   }
+
+  // Cache in local session
+  const localAccounts = JSON.parse(safeStorage.getItem('b4it_m3alm_registered_users') || '[]');
+  const filtered = localAccounts.filter(u => u.uid !== uid);
+  filtered.push({ ...userPayload, createdAt: nowIso });
+  safeStorage.setItem('b4it_m3alm_registered_users', JSON.stringify(filtered));
+
+  return userPayload;
+}
+
+/**
+ * Registers a new Customer or Provider via HTTPS Backend
+ * Backend uses bcrypt hashing and Firebase Admin Custom Tokens
+ */
+export async function registerUserWithPassword({
+  fullName,
+  phone,
+  password,
+  role = 'customer',
+  cityId = 'الدار البيضاء',
+  professionName = '',
+  professionId = '',
+  subCraft = '',
+  whatsapp = ''
+}) {
+  // 1. Client-side fast check
+  const pwdValidation = validatePassword(password);
+  if (!pwdValidation.isValid) {
+    throw new Error(pwdValidation.message);
+  }
+
+  const cleanIdentifier = String(phone || fullName || '').trim();
+  if (!cleanIdentifier || cleanIdentifier.length < 3) {
+    throw new Error('يرجى إدخال اسم مستخدم أو رقم هاتف صالح.');
+  }
+
+  // 2. Call HTTPS Backend API
+  let resData;
+  try {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        identifier: cleanIdentifier,
+        password: password.trim(),
+        name: fullName,
+        phone: cleanIdentifier,
+        city: cityId,
+        role: role === 'provider' ? 'provider' : 'customer',
+        profession: professionName || professionId,
+        subCraft,
+        whatsapp
+      })
+    });
+
+    resData = await response.json();
+
+    if (!response.ok) {
+      throw new Error(resData.error || 'فشل في إنشاء الحساب.');
+    }
+  } catch (apiErr) {
+    if (apiErr.message.includes('لقد تجاوزت') || apiErr.message.includes('مسجل مسبقاً') || apiErr.message.includes('كلمة السر')) {
+      throw apiErr;
+    }
+    throw new Error(apiErr.message || 'تعذر الاتصال بالخادم. يرجى المحاولة لاحقاً.');
+  }
+
+  const { customToken, user } = resData;
+
+  // 3. Sign in to Firebase Auth using Custom Token if available
+  if (customToken && isFirebaseConfigured && auth) {
+    try {
+      await signInWithCustomToken(auth, customToken);
+    } catch (authErr) {
+      console.warn('[AuthService] signInWithCustomToken note:', authErr.message);
+    }
+  }
+
+  // 4. Save session and complete local profile
+  safeStorage.setItem('b4it_m3alm_session_uid', user.uid);
+  safeStorage.setItem('b4it_m3alm_session_role', user.role);
+
+  return {
+    uid: user.uid,
+    role: user.role,
+    fullName: user.name || fullName,
+    name: user.name || fullName,
+    phone: user.phone || cleanIdentifier,
+    city: user.city || cityId,
+    professionName: user.profession || professionName,
+    subCraft: user.subCraft || subCraft
+  };
+}
+
+/**
+ * Logs in an existing user via HTTPS Backend
+ * Backend validates password using bcrypt and issues Firebase Custom Token
+ */
+export async function loginUserWithPassword({ phone, password }) {
+  const pwdValidation = validatePassword(password);
+  if (!pwdValidation.isValid) {
+    throw new Error(pwdValidation.message);
+  }
+
+  const cleanIdentifier = String(phone || '').trim();
+  if (!cleanIdentifier) {
+    throw new Error('يرجى إدخال اسم المستخدم أو رقم الهاتف.');
+  }
+
+  let resData;
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        identifier: cleanIdentifier,
+        password: password.trim()
+      })
+    });
+
+    resData = await response.json();
+
+    if (!response.ok) {
+      // Return standard generic error message
+      throw new Error(resData.error || 'المعرف أو كلمة السر غير صحيحة');
+    }
+  } catch (apiErr) {
+    throw new Error(apiErr.message || 'المعرف أو كلمة السر غير صحيحة');
+  }
+
+  const { customToken, user } = resData;
+
+  // Sign in to Firebase Auth via Custom Token
+  if (customToken && isFirebaseConfigured && auth) {
+    try {
+      await signInWithCustomToken(auth, customToken);
+    } catch (authErr) {
+      console.warn('[AuthService] signInWithCustomToken notice:', authErr.message);
+    }
+  }
+
+  safeStorage.setItem('b4it_m3alm_session_uid', user.uid);
+  safeStorage.setItem('b4it_m3alm_session_role', user.role);
+
+  return {
+    uid: user.uid,
+    role: user.role,
+    fullName: user.name || user.fullName || cleanIdentifier,
+    name: user.name || user.fullName || cleanIdentifier,
+    phone: user.phone || cleanIdentifier,
+    city: user.city || 'الدار البيضاء',
+    professionName: user.professionName || user.profession || '',
+    subCraft: user.subCraft || ''
+  };
 }
 
 /**
  * Subscribes to real-time Firebase Auth session state changes.
- * Loads the associated Firestore user document automatically upon sign-in.
  */
 export function subscribeToAuthChanges(callback) {
   if (!isFirebaseConfigured || !auth) {
-    // If not configured, check if active test session exists
-    const storedSession = localStorage.getItem('b4it_m3alm_session_uid');
+    const storedSession = safeStorage.getItem('b4it_m3alm_session_uid');
     if (storedSession) {
       getUserProfile(storedSession).then(profile => {
         callback(profile);
@@ -316,23 +326,26 @@ export function subscribeToAuthChanges(callback) {
         if (profile) {
           callback({
             uid: firebaseUser.uid,
-            phoneNumber: firebaseUser.phoneNumber,
             ...profile
           });
         } else {
-          // Authenticated in Auth but profile not yet completed
           callback({
             uid: firebaseUser.uid,
-            phoneNumber: firebaseUser.phoneNumber,
-            isNewUser: true
+            role: safeStorage.getItem('b4it_m3alm_session_role') || 'customer'
           });
         }
       } catch (err) {
-        console.error('[AuthService] Error resolving user profile:', err);
-        callback({ uid: firebaseUser.uid, phoneNumber: firebaseUser.phoneNumber });
+        callback({ uid: firebaseUser.uid });
       }
     } else {
-      callback(null);
+      const storedSession = safeStorage.getItem('b4it_m3alm_session_uid');
+      if (storedSession) {
+        getUserProfile(storedSession).then(profile => {
+          callback(profile);
+        });
+      } else {
+        callback(null);
+      }
     }
   });
 
@@ -343,7 +356,8 @@ export function subscribeToAuthChanges(callback) {
  * Signs out the currently authenticated user
  */
 export async function signOutUser() {
-  localStorage.removeItem('b4it_m3alm_session_uid');
+  safeStorage.removeItem('b4it_m3alm_session_uid');
+  safeStorage.removeItem('b4it_m3alm_session_role');
 
   if (isFirebaseConfigured && auth) {
     try {
@@ -354,3 +368,45 @@ export async function signOutUser() {
   }
   return true;
 }
+
+/**
+ * Checks whether a phone number exists
+ */
+export async function checkPhoneExists(rawPhone) {
+  const normalizedPhone = normalizeMoroccanPhone(rawPhone) || rawPhone;
+  if (!normalizedPhone) return { exists: false };
+
+  if (isFirebaseConfigured && db) {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', String(normalizedPhone)));
+      if (userDoc.exists()) {
+        return { exists: true, user: userDoc.data() };
+      }
+    } catch {}
+  }
+
+  const localAccounts = JSON.parse(safeStorage.getItem('b4it_m3alm_registered_users') || '[]');
+  const found = localAccounts.find(u => u.phone === normalizedPhone || u.normalizedPhone === normalizedPhone);
+  return { exists: Boolean(found), user: found || null };
+}
+
+export async function sendOtp() {
+  throw new Error('تم استبدال نظام OTP بنظام المعرف وكلمة السر الآمن.');
+}
+
+export async function verifyOtp() {
+  throw new Error('تم استبدال نظام OTP بنظام المعرف وكلمة السر الآمن.');
+}
+
+export function setupRecaptcha() {
+  return null;
+}
+
+export function formatAuthEmailFromPhone(phone) {
+  return '';
+}
+
+export function deriveAuthPassword(pwd) {
+  return '';
+}
+
