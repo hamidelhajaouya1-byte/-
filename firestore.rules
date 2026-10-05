@@ -1,0 +1,143 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.admin == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    // Default deny for all unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Users collection: Document ID must be Firebase Auth UID
+    match /users/{userId} {
+      // User can read their own profile; Admin can read and list
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+
+      // Create new user profile:
+      // - Must be authenticated as the same userId
+      // - Cannot set role to 'admin' (only 'customer' or 'provider' allowed) unless Admin
+      // - Cannot set isAdmin to true unless Admin
+      // - uid field must match auth.uid
+      allow create: if (isOwner(userId) &&
+        request.resource.data.uid == userId &&
+        (request.resource.data.role == 'customer' || request.resource.data.role == 'provider') &&
+        (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == false)) || isAdmin();
+
+      // Update user profile:
+      // - Must be owner (cannot change 'role', 'isAdmin', 'uid', or 'createdAt') or Admin
+      allow update: if (isOwner(userId) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == resource.data.isAdmin) &&
+        request.resource.data.createdAt == resource.data.createdAt) || isAdmin();
+
+      // Deletion: restricted to Admin
+      allow delete: if isAdmin();
+    }
+
+    // 2. Providers collection: Public read for active profiles; write restricted to provider owner or Admin
+    match /providers/{providerId} {
+      // Anyone can read active provider profiles; Admin can read all
+      allow read: if resource == null || resource.data.isActive == true || isAdmin();
+
+      // Provider creation: authenticated provider owner or Admin
+      allow create: if (isSignedIn() &&
+        (request.resource.data.id == request.auth.uid || request.resource.data.userId == request.auth.uid)) || isAdmin();
+
+      // Provider update: provider themselves or Admin
+      allow update: if (isSignedIn() &&
+        (resource.data.id == request.auth.uid || resource.data.userId == request.auth.uid) &&
+        request.resource.data.createdAt == resource.data.createdAt) || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // Tombstones & Deleted Accounts collections: read/write by Admin only
+    match /tombstones/{tombstoneId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /deleted_accounts/{accountId} {
+      allow read, write: if isAdmin();
+    }
+
+    // 3. Customers collection
+    match /customers/{customerId} {
+      allow read, write: if isOwner(customerId);
+    }
+
+    // 4. Cities and Professions (Read-only master lookup data)
+    match /cities/{cityId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /professions/{professionId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // 5. Favorites: User can only read/manage their own favorites
+    match /favorites/{favoriteId} {
+      allow read, write: if isSignedIn() &&
+        (resource == null || resource.data.customerId == request.auth.uid) &&
+        (request.resource == null || request.resource.data.customerId == request.auth.uid);
+    }
+
+    // 6. Reviews: Anyone can read active reviews, authenticated customer can create/update only their own review
+    match /reviews/{reviewId} {
+      allow read: if resource == null || resource.data.isActive == true;
+
+      // Creation: customer can create with their own UID, valid rating 1-5, and non-empty comment
+      allow create: if isSignedIn() &&
+        request.resource.data.customerUid == request.auth.uid &&
+        request.resource.data.rating >= 1 && request.resource.data.rating <= 5 &&
+        request.resource.data.comment is string &&
+        request.resource.data.comment.size() > 0;
+
+      // Update: customer can update their review but cannot change customerUid or providerId
+      allow update: if isSignedIn() &&
+        resource.data.customerUid == request.auth.uid &&
+        request.resource.data.customerUid == resource.data.customerUid &&
+        request.resource.data.providerId == resource.data.providerId &&
+        request.resource.data.rating >= 1 && request.resource.data.rating <= 5 &&
+        request.resource.data.comment is string &&
+        request.resource.data.comment.size() > 0;
+
+      allow delete: if false;
+    }
+
+    // 7. Notifications: User can read and update their own notifications; users can create notifications for others
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isSignedIn() &&
+        (resource.data.recipientUid == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+        request.resource.data.actorUid == request.auth.uid &&
+        request.resource.data.recipientUid != request.auth.uid;
+    }
+
+    // 8. Likes collection: Authenticated user can create and remove their own like
+    match /likes/{likeId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}
